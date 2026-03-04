@@ -32,23 +32,28 @@ class CTPAdapter:
         self._state_writer = state_writer
 
         self._gateway = CtpGatewayWrapper(config)
-        self._callback_handler: CtpCallbackHandler | None = None
+
+        # Create callback handler immediately (no gateway interaction needed)
+        self._callback_handler = CtpCallbackHandler(
+            on_order_update=self._on_order_update,
+            on_trade_update=self._on_trade_update,
+        )
 
         self._order_futures: dict[str, asyncio.Future[VenueReceipt]] = {}
         self._submitted_orders: set[str] = set()
 
         self.submit_count: int = 0
         self.cancel_count: int = 0
-
-        self._setup_callbacks()
+        # Note: _setup_callbacks() is NOT called here.
+        # Gateway callbacks are registered in connect() after the
+        # underlying CtpGateway object is initialized.
 
     def _setup_callbacks(self) -> None:
-        """Setup CTP callback handlers."""
-        self._callback_handler = CtpCallbackHandler(
-            on_order_update=self._on_order_update,
-            on_trade_update=self._on_trade_update,
-        )
+        """Register CTP callback handlers on the live gateway.
 
+        Must be called AFTER connect() because get_gateway() requires
+        the underlying CtpGateway to be initialized.
+        """
         gateway = self._gateway.get_gateway()
         if hasattr(gateway, "on_rtn_order"):
             gateway.on_rtn_order = self._callback_handler.on_rtn_order
@@ -60,8 +65,9 @@ class CTPAdapter:
             gateway.on_err_rtn_order_action = self._callback_handler.on_err_rtn_order_action
 
     async def connect(self) -> None:
-        """Connect to CTP gateway."""
+        """Connect to CTP gateway and register callbacks."""
         await self._gateway.connect()
+        self._setup_callbacks()
 
     async def disconnect(self) -> None:
         """Disconnect from CTP gateway."""
@@ -257,7 +263,7 @@ class CTPAdapter:
             volume_traded = data.get("VolumeTraded", "0")
             avg_price = data.get("AvgPrice", "0")
 
-            ctp_status = self._callback_handler._map_ctp_status(status) if self._callback_handler else "SENT"
+            ctp_status = self._callback_handler._map_ctp_status(status)
 
             from core.venue_order_spec import VenueOrderStatus
 
@@ -323,8 +329,6 @@ class CTPAdapter:
 
                 long_pos = Decimal(str(data.get("Position", "0")))
                 short_pos = Decimal(str(data.get("YdPosition", "0")))
-                long_today = Decimal(str(data.get("TodayPosition", "0")))
-                short_today = Decimal(str(data.get("ShortPosition", "0")))
 
                 net_long = long_pos - short_pos
                 net_short = short_pos - long_pos
@@ -363,7 +367,7 @@ class CTPAdapter:
             if hasattr(gateway, "on_rsp_qry_investor_position") and 'original_handler' in locals():
                 gateway.on_rsp_qry_investor_position = original_handler
 
-    async def get_market_status(self, symbol: str) -> MarketStatus:
+    async def get_market_status(self, symbol: str) -> BaseMarketStatus:
         """Get market status for a symbol.
 
         Args:

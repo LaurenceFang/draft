@@ -45,8 +45,14 @@ def ctp_config():
 
 @pytest.fixture
 def ctp_adapter(ctp_config, mock_gateway):
-    """Create CTP adapter with mocked gateway."""
-    with patch("venue.ctp_gateway.CtpGatewayWrapper") as mock_wrapper:
+    """Create CTP adapter with mocked gateway.
+
+    Patch target must be 'venue.ctp_adapter.CtpGatewayWrapper' (the name as
+    imported in the adapter module), NOT 'venue.ctp_gateway.CtpGatewayWrapper'.
+    Using the wrong module path means the adapter still instantiates the real
+    class and the mock is never used.
+    """
+    with patch("venue.ctp_adapter.CtpGatewayWrapper") as mock_wrapper:
         wrapper_instance = MagicMock()
         wrapper_instance.is_connected = True
         wrapper_instance.get_gateway.return_value = mock_gateway
@@ -54,8 +60,10 @@ def ctp_adapter(ctp_config, mock_gateway):
         wrapper_instance.disconnect = AsyncMock()
         mock_wrapper.return_value = wrapper_instance
 
+        # CTPAdapter.__init__ no longer calls _setup_callbacks() so
+        # get_gateway() is NOT triggered here — safe to construct without connect().
         adapter = CTPAdapter(ctp_config)
-        return adapter
+        yield adapter  # yield keeps the patch active for the full test body
 
 
 @pytest.mark.asyncio
