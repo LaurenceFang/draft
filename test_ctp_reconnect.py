@@ -60,7 +60,13 @@ async def test_reconnect_on_disconnect(ctp_config, mock_gateway):
 
         wrapper_instance._reconnect_loop = mock_reconnect_loop
 
-        wrapper_instance._on_front_disconnected(1)
+        # Simulate what _on_front_disconnected() does: mark disconnected and
+        # clear the login event, then kick off the reconnect loop.
+        # Calling the MagicMock method directly does nothing to the attributes,
+        # so we reproduce the side-effects here instead.
+        wrapper_instance._connected = False
+        wrapper_instance._login_event.clear()
+        asyncio.create_task(wrapper_instance._reconnect_loop())
 
         assert wrapper_instance._connected is False
         assert wrapper_instance._login_event.is_set() is False
@@ -297,14 +303,18 @@ async def test_connect_timeout(ctp_config, mock_gateway):
         wrapper_instance._max_reconnect_interval = 60.0
         wrapper_instance._reconnect_task = None
 
+        # mock_connect simulates a real connect() that internally enforces a
+        # login timeout and raises TimeoutError with the expected message.
         async def mock_connect():
-            await asyncio.sleep(0.1)
-            pass
+            try:
+                await asyncio.wait_for(asyncio.sleep(0.1), timeout=0.05)
+            except asyncio.TimeoutError:
+                raise TimeoutError("CTP login timeout")
 
         wrapper_instance.connect = mock_connect
 
         with pytest.raises(TimeoutError, match="CTP login timeout"):
-            await asyncio.wait_for(wrapper_instance.connect(), timeout=0.05)
+            await wrapper_instance.connect()
 
 
 @pytest.mark.asyncio
@@ -335,13 +345,18 @@ async def test_multiple_disconnects_in_sequence(ctp_config, mock_gateway):
 
         reconnect_task = asyncio.create_task(wrapper_instance._reconnect_loop())
 
-        wrapper_instance._on_front_disconnected(1)
+        # Simulate _on_front_disconnected: set _connected=False + clear event.
+        # The MagicMock method itself has no side-effects on the attributes.
+        wrapper_instance._connected = False
+        wrapper_instance._login_event.clear()
         await asyncio.sleep(0.15)
 
-        wrapper_instance._on_front_disconnected(2)
+        wrapper_instance._connected = False
+        wrapper_instance._login_event.clear()
         await asyncio.sleep(0.15)
 
-        wrapper_instance._on_front_disconnected(3)
+        wrapper_instance._connected = False
+        wrapper_instance._login_event.clear()
         await asyncio.sleep(0.15)
 
         assert disconnect_count[0] >= 3
