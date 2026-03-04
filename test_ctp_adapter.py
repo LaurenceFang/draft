@@ -60,10 +60,8 @@ def ctp_adapter(ctp_config, mock_gateway):
         wrapper_instance.disconnect = AsyncMock()
         mock_wrapper.return_value = wrapper_instance
 
-        # CTPAdapter.__init__ no longer calls _setup_callbacks() so
-        # get_gateway() is NOT triggered here — safe to construct without connect().
         adapter = CTPAdapter(ctp_config)
-        yield adapter  # yield keeps the patch active for the full test body
+        yield adapter
 
 
 @pytest.mark.asyncio
@@ -170,9 +168,11 @@ async def test_query_positions_empty(ctp_adapter, mock_gateway):
     mock_gateway.query_position.return_value = None
 
     async def trigger_callback():
+        # query_positions() registers the local handler on mock_gateway before
+        # hitting the first await, so by the time this sleep finishes the
+        # attribute is already the real callable.
         await asyncio.sleep(0.01)
-        if hasattr(ctp_adapter, '_on_rsp_qry_investor_position'):
-            ctp_adapter._on_rsp_qry_investor_position({}, None, 1, True)
+        mock_gateway.on_rsp_qry_investor_position({}, None, 1, True)
 
     asyncio.create_task(trigger_callback())
 
@@ -197,8 +197,7 @@ async def test_query_positions_long(ctp_adapter, mock_gateway):
 
     async def trigger_callback():
         await asyncio.sleep(0.01)
-        if hasattr(ctp_adapter, '_on_rsp_qry_investor_position'):
-            ctp_adapter._on_rsp_qry_investor_position(position_data, None, 1, True)
+        mock_gateway.on_rsp_qry_investor_position(position_data, None, 1, True)
 
     asyncio.create_task(trigger_callback())
 
@@ -316,8 +315,7 @@ async def test_query_order(ctp_adapter, mock_gateway):
 
     async def trigger_callback():
         await asyncio.sleep(0.01)
-        if hasattr(ctp_adapter, '_on_rsp_qry_order'):
-            ctp_adapter._on_rsp_qry_order(order_data, None, 1, True)
+        mock_gateway.on_rsp_qry_order(order_data, None, 1, True)
 
     asyncio.create_task(trigger_callback())
 
